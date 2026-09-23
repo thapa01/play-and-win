@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -16,7 +16,6 @@ export default function SignUpPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,8 +34,6 @@ export default function SignUpPage() {
         data: {
           full_name: fullName,
           username: username,
-
-          // Keep the referral code with the new account
           referral_code: referralCode || null,
         },
       },
@@ -182,5 +179,21 @@ export default function SignUpPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-slate-50">
+          <div className="text-sm font-semibold text-slate-600">
+            Loading...
+          </div>
+        </main>
+      }
+    >
+      <SignUpForm />
+    </Suspense>
   );
 }
