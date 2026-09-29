@@ -31,7 +31,7 @@ export default function ForgotPasswordPage() {
     const { error } = await supabase.auth.resetPasswordForEmail(
       cleanEmail,
       {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: "https://palynwin.com/reset-password",
       }
     );
 
