@@ -11,9 +11,9 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-export default function ResetPasswordPage() {
-  const supabase = createClient();
+const supabase = createClient();
 
+export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -27,47 +27,42 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    async function prepareRecoverySession() {
-      setError("");
+    let mounted = true;
 
-      const code = new URLSearchParams(window.location.search).get("code");
-
-      if (code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-        if (error) {
-          setError(
-            "This password reset link is invalid or has expired. Please request a new reset link."
-          );
-          setInitializing(false);
-          return;
-        }
-
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname
-        );
-
-        setInitializing(false);
-        return;
-      }
-
+    async function checkSession() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
+      if (!mounted) return;
+
       if (!session) {
         setError(
-          "Auth session missing. Please request a new password reset link."
+          "This password reset link is invalid or has expired. Please request a new reset link."
         );
       }
 
       setInitializing(false);
     }
 
-    prepareRecoverySession();
-  }, [supabase]);
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+
+      if (event === "PASSWORD_RECOVERY" && session) {
+        setError("");
+        setInitializing(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -84,6 +79,18 @@ export default function ResetPasswordPage() {
 
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
+      setLoading(false);
+      return;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session) {
+      setError(
+        "Your password reset session is missing. Please request a new reset link."
+      );
       setLoading(false);
       return;
     }
@@ -111,7 +118,6 @@ export default function ResetPasswordPage() {
       <div className="flex min-h-[90vh] items-center justify-center">
         <div className="w-full max-w-md">
 
-          {/* Brand */}
           <div className="mb-8 text-center">
             <Link
               href="/login"
@@ -121,10 +127,7 @@ export default function ResetPasswordPage() {
             </Link>
 
             <div className="mx-auto mt-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 shadow-lg">
-              <LockKeyhole
-                size={28}
-                className="text-white"
-              />
+              <LockKeyhole size={28} className="text-white" />
             </div>
 
             <h1 className="mt-6 text-3xl font-bold text-slate-900">
@@ -136,11 +139,9 @@ export default function ResetPasswordPage() {
             </p>
           </div>
 
-          {/* Card */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
 
             {message ? (
-              /* SUCCESS */
               <div className="text-center">
 
                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
@@ -168,10 +169,8 @@ export default function ResetPasswordPage() {
 
               </div>
             ) : (
-              /* FORM */
               <form onSubmit={handleSubmit}>
 
-                {/* New Password */}
                 <div>
                   <label
                     htmlFor="password"
@@ -221,7 +220,6 @@ export default function ResetPasswordPage() {
                   </p>
                 </div>
 
-                {/* Confirm Password */}
                 <div className="mt-5">
                   <label
                     htmlFor="confirmPassword"
@@ -273,7 +271,6 @@ export default function ResetPasswordPage() {
                   </div>
                 </div>
 
-                {/* Error */}
                 {error && (
                   <div className="mt-5 rounded-xl border border-red-100 bg-red-50 px-4 py-3">
                     <p className="text-sm leading-5 text-red-600">
@@ -282,7 +279,6 @@ export default function ResetPasswordPage() {
                   </div>
                 )}
 
-                {/* Submit */}
                 <button
                   type="submit"
                   disabled={loading || initializing || !!error}
@@ -295,7 +291,6 @@ export default function ResetPasswordPage() {
                     : "Update Password"}
                 </button>
 
-                {/* Back */}
                 <Link
                   href="/login"
                   className="mt-5 flex items-center justify-center gap-2 text-sm font-semibold text-slate-500 transition hover:text-slate-900"
