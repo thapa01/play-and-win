@@ -982,6 +982,10 @@ export default function AdminTournamentsPage() {
                       PUBG
                     </option>
 
+                    <option value="BGMI">
+                      BGMI
+                    </option>
+
                     <option value="FREE FIRE">
                       FREE FIRE
                     </option>

@@ -230,9 +230,14 @@ export default function Home() {
 
     return "https://images.unsplash.com/photo-1560253023-3ec5d502959f?auto=format&fit=crop&w=900&q=85";
   }
-
+  
   function getTournamentHref(tournament: Tournament) {
-    return `/tournaments/${tournament.id}`;
+    const slug = tournament.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+  
+    return `/tournaments/${slug}`;
   }
 
   const searchableGames = [

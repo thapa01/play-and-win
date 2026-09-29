@@ -16,11 +16,12 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-type PaymentMethod = "eSewa" | "Khalti" | "Bank Transfer";
+type PaymentMethod = "eSewa" | "Khalti" | "UPI" | "Bank Transfer";
 
 const PAYMENT_METHODS: PaymentMethod[] = [
   "eSewa",
   "Khalti",
+  "UPI",
   "Bank Transfer",
 ];
 
@@ -66,6 +67,14 @@ const PAYMENT_DETAILS: Record<
       "Scan the account-details QR below to view the bank payment information.",
     image: "/payment/bank-qr.png",
     label: "Bank Details",
+  },
+
+  UPI: {
+    title: "Pay with UPI",
+    description:
+      "Scan the UPI QR code or pay directly using the UPI ID below.",
+    image: "/payment/upi.jpeg",
+    label: "UPI QR",
   },
 };
 
@@ -634,11 +643,13 @@ export default function DepositPage() {
                             </p>
 
                             <p className="mt-1 text-xs text-slate-400">
-                              {method === "eSewa"
-                                ? "QR Payment"
-                                : method === "Khalti"
-                                ? "QR Payment"
-                                : "Account Payment"}
+                            {method === "eSewa"
+                             ? "QR Payment"
+                             : method === "Khalti"
+                             ? "QR Payment"
+                             : method === "UPI"
+                             ? "UPI Payment"
+                             : "Account Payment"}
                             </p>
                           </div>
 
@@ -716,11 +727,27 @@ export default function DepositPage() {
 
                 {/* Image Path Helper */}
 
-                <div className="mt-4 rounded-2xl bg-white p-3 text-center">
-                  <p className="text-xs font-semibold text-slate-400">
-                    {paymentMethod}
-                  </p>
-                </div>
+                <div className="mt-4 rounded-2xl bg-white p-4 text-center">
+  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+    {paymentMethod}
+  </p>
+
+  {paymentMethod === "UPI" && (
+    <div className="mt-3">
+      <p className="text-xs font-medium text-slate-500">
+        UPI ID
+      </p>
+
+      <p className="mt-1 text-base font-black text-slate-950">
+        8959743905@pthdfc
+      </p>
+
+      <p className="mt-1 text-xs text-slate-400">
+        You can also pay directly using this UPI ID.
+      </p>
+    </div>
+  )}
+</div>
               </div>
 
               {/* =================================================
@@ -1059,7 +1086,7 @@ export default function DepositPage() {
                     </p>
 
                     <p className="mt-1 text-sm leading-5 text-slate-500">
-                      Select eSewa, Khalti or Bank Transfer.
+                    Select eSewa, Khalti, UPI or Bank Transfer.
                     </p>
                   </div>
                 </div>
@@ -1075,8 +1102,8 @@ export default function DepositPage() {
                     </p>
 
                     <p className="mt-1 text-sm leading-5 text-slate-500">
-                      Scan the displayed QR code and complete
-                      your payment.
+                    Scan the QR code or use the displayed UPI ID
+                    to complete your payment.
                     </p>
                   </div>
                 </div>

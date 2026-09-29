@@ -10,6 +10,13 @@ const games = [
       "https://images.unsplash.com/photo-1560253023-3ec5d502959f?auto=format&fit=crop&w=1000&q=85",
   },
   {
+    title: "BGMI",
+    description: "Battle. Strategy. Victory.",
+    href: "/games/bgmi",
+    image:
+      "https://images.unsplash.com/photo-1593305841991-05c297ba4575?auto=format&fit=crop&w=1000&q=85",
+  },
+  {
     title: "FREE FIRE",
     description: "Fast Matches. Bigger Rewards.",
     href: "/games/free-fire",
