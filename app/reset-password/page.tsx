@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   LockKeyhole,
@@ -21,8 +21,53 @@ export default function ResetPasswordPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function prepareRecoverySession() {
+      setError("");
+
+      const code = new URLSearchParams(window.location.search).get("code");
+
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+        if (error) {
+          setError(
+            "This password reset link is invalid or has expired. Please request a new reset link."
+          );
+          setInitializing(false);
+          return;
+        }
+
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
+
+        setInitializing(false);
+        return;
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        setError(
+          "Auth session missing. Please request a new password reset link."
+        );
+      }
+
+      setInitializing(false);
+    }
+
+    prepareRecoverySession();
+  }, [supabase]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -151,15 +196,17 @@ export default function ResetPasswordPage() {
                       placeholder="Enter new password"
                       autoComplete="new-password"
                       required
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                      disabled={initializing}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:opacity-60"
                     />
 
                     <button
                       type="button"
+                      disabled={initializing}
                       onClick={() =>
                         setShowPassword(!showPassword)
                       }
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:text-slate-700"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:text-slate-700 disabled:opacity-50"
                     >
                       {showPassword ? (
                         <EyeOff size={18} />
@@ -203,17 +250,19 @@ export default function ResetPasswordPage() {
                       placeholder="Confirm new password"
                       autoComplete="new-password"
                       required
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+                      disabled={initializing}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:opacity-60"
                     />
 
                     <button
                       type="button"
+                      disabled={initializing}
                       onClick={() =>
                         setShowConfirmPassword(
                           !showConfirmPassword
                         )
                       }
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:text-slate-700"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:text-slate-700 disabled:opacity-50"
                     >
                       {showConfirmPassword ? (
                         <EyeOff size={18} />
@@ -236,10 +285,12 @@ export default function ResetPasswordPage() {
                 {/* Submit */}
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || initializing || !!error}
                   className="mt-6 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-bold text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {loading
+                  {initializing
+                    ? "Preparing Secure Reset..."
+                    : loading
                     ? "Updating Password..."
                     : "Update Password"}
                 </button>
