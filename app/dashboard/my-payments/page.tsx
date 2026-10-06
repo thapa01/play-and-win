@@ -516,19 +516,29 @@ export default async function MyPaymentsPage() {
                   </div>
 
                   {/* Approved deposit information */}
-                  {item.status === "approved" &&
-                    isDeposit && (
-                      <div className="mt-5 rounded-2xl border border-green-200 bg-green-50 p-4">
-                        <p className="text-sm font-bold text-green-700">
-                          ✅ Deposit approved
-                        </p>
+{item.status === "approved" && isDeposit && (
+  <div className="mt-5 rounded-2xl border border-green-200 bg-green-50 p-4">
+    <p className="text-sm font-bold text-green-700">
+      ✅ Deposit approved
+    </p>
+    <p className="mt-1 text-sm text-green-700">
+      NPR {item.amount.toLocaleString()} has been added to your wallet.
+    </p>
+  </div>
+)}
 
-                        <p className="mt-1 text-sm text-green-700">
-                          NPR {item.amount.toLocaleString()} has been
-                          added to your wallet.
-                        </p>
-                      </div>
-                    )}
+{/* Approved withdrawal information */}
+{item.type === "withdrawal" && item.status === "completed" && (
+  <div className="mt-5 rounded-2xl border border-green-200 bg-green-50 p-4">
+    <p className="text-sm font-bold text-green-700">
+      ✅ Withdrawal approved
+    </p>
+    <p className="mt-1 text-sm text-green-700">
+      Your withdrawal request for NPR {item.amount.toLocaleString()} has been approved.
+    </p>
+  </div>
+)}
+                    
 
                 </div>
               );

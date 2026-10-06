@@ -253,23 +253,32 @@ export default function WithdrawPage() {
                 </select>
               </div>
 
-              {/* Account Number */}
-              <div>
-                <label className="text-sm font-bold text-slate-950">
-                  Account / Mobile Number
-                </label>
+              
+{/* Account Number */}
+<div>
+  <label className="text-sm font-bold text-slate-950">
+    Account / Mobile Number
+  </label>
 
-                <input
-                  type="text"
-                  value={accountNumber}
-                  onChange={(event) =>
-                    setAccountNumber(event.target.value)
-                  }
-                  placeholder="Enter eSewa / Khalti / bank account number"
-                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-950"
-                  required
-                />
-              </div>
+  <input
+    type="text"
+    inputMode="numeric"
+    pattern="[0-9]+"
+    value={accountNumber}
+    onChange={(event) => {
+      const digitsOnly = event.target.value.replace(/\D/g, "");
+      setAccountNumber(digitsOnly);
+    }}
+    placeholder="Enter digits only"
+    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-950"
+    required
+  />
+
+  <p className="mt-2 text-xs text-slate-400">
+    Numbers only. Letters and special characters are not allowed.
+  </p>
+</div>
+
 
               {/* Account Name */}
               <div>
