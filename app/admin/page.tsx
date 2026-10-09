@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  Bell,
   Trophy,
   Users,
   CreditCard,
@@ -632,6 +633,16 @@ export default function AdminDashboard() {
   description="Review and manage player support requests."
   iconClass="bg-blue-50 text-blue-600"
 />
+
+<AdminCard
+  href="/admin/announcements"
+  icon={<Bell size={22} />}
+  title="Announcements"
+  description="Send tournament updates, offers and important notifications to all users."
+  iconClass="bg-yellow-50 text-yellow-600"
+/>
+
+
           </div>
         </section>
 

@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -39,37 +40,68 @@ export default function TournamentsPage() {
   const [selectedFilter, setSelectedFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 30_000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadTournaments() {
+      setLoading(true);
+      setError(false);
+
       const supabase = createClient();
 
       const { data, error } = await supabase
         .from("tournaments")
         .select("*")
         .in("status", ["upcoming", "live"])
-        .order("start_date", {
-          ascending: true,
-        });
+        .gte("start_date", new Date().toISOString())
+        .order("start_date", { ascending: true });
+
+      if (cancelled) return;
 
       if (error) {
         console.error("Tournament fetch error:", error);
         setError(true);
-        setLoading(false);
-        return;
+        setTournaments([]);
+      } else {
+        setTournaments((data || []) as Tournament[]);
       }
 
-      setTournaments(data || []);
       setLoading(false);
     }
 
     loadTournaments();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+
+  // Keep live tournaments visible. Hide upcoming tournaments
+  // as soon as their scheduled start time has passed.
+  const activeTournaments = tournaments.filter((tournament) => {
+    if (tournament.status === "live") {
+      return true;
+    }
+
+    return new Date(tournament.start_date).getTime() > currentTime;
+  });
 
   const filteredTournaments =
     selectedFilter === "ALL"
-      ? tournaments
-      : tournaments.filter(
+      ? activeTournaments
+      : activeTournaments.filter(
           (tournament) =>
             tournament.game.toUpperCase() === selectedFilter
         );
@@ -87,7 +119,7 @@ export default function TournamentsPage() {
           </Link>
 
           <p className="mt-10 text-xs font-bold uppercase tracking-[0.2em] text-yellow-500">
-            Compete & Win
+            Compete &amp; Win
           </p>
 
           <h1 className="mt-2 text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
@@ -130,9 +162,7 @@ export default function TournamentsPage() {
         <div className="mx-auto max-w-7xl px-5 sm:px-6">
           <div className="mb-8">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-yellow-500">
-              {selectedFilter === "ALL"
-                ? "Upcoming"
-                : selectedFilter}
+              {selectedFilter === "ALL" ? "Upcoming" : selectedFilter}
             </p>
 
             <h2 className="mt-2 text-2xl font-black text-slate-950 sm:text-3xl">
@@ -140,7 +170,6 @@ export default function TournamentsPage() {
             </h2>
           </div>
 
-          {/* Loading */}
           {loading ? (
             <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm">
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-yellow-400" />
@@ -197,9 +226,7 @@ export default function TournamentsPage() {
                   "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=900&q=85";
 
                 const type =
-                  tournament.tournament_type === "paid"
-                    ? "PAID"
-                    : "FREE";
+                  tournament.tournament_type === "paid" ? "PAID" : "FREE";
 
                 return (
                   <div
@@ -218,7 +245,7 @@ export default function TournamentsPage() {
                       </span>
 
                       <span className="absolute right-4 top-4 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-slate-900">
-                        {type}
+                        {tournament.status === "live" ? "LIVE" : type}
                       </span>
 
                       <h3 className="absolute bottom-5 left-5 right-5 text-2xl font-black text-white">
@@ -238,27 +265,17 @@ export default function TournamentsPage() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <Users
-                            size={17}
-                            className="text-slate-400"
-                          />
+                          <Users size={17} className="text-slate-400" />
                           {tournament.registered_players} /{" "}
                           {tournament.max_players}
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <Gift
-                            size={17}
-                            className="text-slate-400"
-                          />
-
+                          <Gift size={17} className="text-slate-400" />
                           Prize Pool:
-
                           <strong className="text-slate-900">
                             NPR{" "}
-                            {Number(
-                              tournament.prize_pool
-                            ).toLocaleString()}
+                            {Number(tournament.prize_pool).toLocaleString()}
                           </strong>
                         </div>
                       </div>

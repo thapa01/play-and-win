@@ -1,6 +1,8 @@
+
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import {
   ArrowLeft,
@@ -10,11 +12,11 @@ import {
 import { createClient } from "@/lib/supabase/client";
 
 export default function WithdrawPage() {
+  const router = useRouter();
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("eSewa");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
@@ -35,7 +37,14 @@ export default function WithdrawPage() {
     }
 
     if (!accountNumber.trim()) {
-      setError("Please enter your account number or mobile number.");
+      setError(
+        "Please enter your account number or mobile number."
+      );
+      return;
+    }
+
+    if (!accountName.trim()) {
+      setError("Please enter your account name.");
       return;
     }
 
@@ -61,7 +70,9 @@ export default function WithdrawPage() {
           .single();
 
       if (walletError || !wallet) {
-        throw new Error("Unable to load your wallet balance.");
+        throw new Error(
+          "Unable to load your wallet balance."
+        );
       }
 
       const currentBalance = Number(wallet.balance);
@@ -95,7 +106,7 @@ export default function WithdrawPage() {
           amount: numericAmount,
           payment_method: paymentMethod,
           account_number: accountNumber.trim(),
-          account_name: accountName.trim() || null,
+          account_name: accountName.trim(),
           status: "pending",
         });
 
@@ -110,7 +121,7 @@ export default function WithdrawPage() {
       setAccountNumber("");
       setAccountName("");
 
-      window.location.href = "/dashboard/wallet/withdraw/success";
+     router.push("/dashboard/wallet/withdraw/success");
     } catch (err) {
       setError(
         err instanceof Error
@@ -125,7 +136,6 @@ export default function WithdrawPage() {
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-10">
       <div className="mx-auto max-w-5xl">
-
         {/* Back */}
         <Link
           href="/dashboard/wallet"
@@ -136,12 +146,9 @@ export default function WithdrawPage() {
         </Link>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_360px]">
-
           {/* Form */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-
             <div className="flex items-center gap-4">
-
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-green-100 text-green-700">
                 <ArrowUpFromLine size={26} />
               </div>
@@ -155,22 +162,23 @@ export default function WithdrawPage() {
                   Withdraw Money
                 </h1>
               </div>
-
             </div>
 
             <p className="mt-5 text-sm leading-6 text-slate-500">
-              Request a withdrawal from your wallet. All withdrawals
-              are manually reviewed by the admin.
+              Request a withdrawal from your wallet. All
+              withdrawals are manually reviewed by the admin.
             </p>
 
             <form
               onSubmit={handleSubmit}
               className="mt-8 space-y-6"
             >
-
               {/* Amount */}
               <div>
-                <label className="text-sm font-bold text-slate-950">
+                <label
+                  htmlFor="withdrawal-amount"
+                  className="text-sm font-bold text-slate-950"
+                >
                   Withdrawal Amount
                 </label>
 
@@ -180,6 +188,7 @@ export default function WithdrawPage() {
                   </span>
 
                   <input
+                    id="withdrawal-amount"
                     type="number"
                     min="50"
                     step="1"
@@ -205,102 +214,104 @@ export default function WithdrawPage() {
                 </p>
 
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {[50, 100, 500, 1000].map(
-                    (value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() =>
-                          setAmount(String(value))
-                        }
-                        className="rounded-xl border border-slate-200 px-3 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
-                      >
-                        NPR {value}
-                      </button>
-                    )
-                  )}
+                  {[50, 100, 500, 1000].map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setAmount(String(value))}
+                      className="rounded-xl border border-slate-200 px-3 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-950 hover:bg-slate-950 hover:text-white"
+                    >
+                      NPR {value}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               {/* Payment Method */}
               <div>
-                <label className="text-sm font-bold text-slate-950">
+                <label
+                  htmlFor="withdrawal-method"
+                  className="text-sm font-bold text-slate-950"
+                >
                   Withdrawal Method
                 </label>
 
                 <select
+                  id="withdrawal-method"
                   value={paymentMethod}
                   onChange={(event) =>
                     setPaymentMethod(event.target.value)
                   }
                   className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-slate-950"
+                  required
                 >
-                  <option value="eSewa">
-                    eSewa
-                  </option>
-
-                  <option value="Khalti">
-                    Khalti
-                  </option>
-
+                  <option value="eSewa">eSewa</option>
+                  <option value="Khalti">Khalti</option>
                   <option value="Bank Transfer">
                     Bank Transfer
                   </option>
-
-                  <option value="FonePay">
-                    FonePay
-                  </option>
+                  <option value="FonePay">FonePay</option>
                 </select>
               </div>
 
-              
-{/* Account Number */}
-<div>
-  <label className="text-sm font-bold text-slate-950">
-    Account / Mobile Number
-  </label>
-
-  <input
-    type="text"
-    inputMode="numeric"
-    pattern="[0-9]+"
-    value={accountNumber}
-    onChange={(event) => {
-      const digitsOnly = event.target.value.replace(/\D/g, "");
-      setAccountNumber(digitsOnly);
-    }}
-    placeholder="Enter digits only"
-    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-950"
-    required
-  />
-
-  <p className="mt-2 text-xs text-slate-400">
-    Numbers only. Letters and special characters are not allowed.
-  </p>
-</div>
-
-
-              {/* Account Name */}
+              {/* Account Number */}
               <div>
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-bold text-slate-950">
-                    Account Name
-                  </label>
-
-                  <span className="text-xs text-slate-400">
-                    Optional
-                  </span>
-                </div>
+                <label
+                  htmlFor="account-number"
+                  className="text-sm font-bold text-slate-950"
+                >
+                  Account / Mobile Number
+                </label>
 
                 <input
+                  id="account-number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]+"
+                  value={accountNumber}
+                  onChange={(event) => {
+                    const digitsOnly =
+                      event.target.value.replace(/\D/g, "");
+                    setAccountNumber(digitsOnly);
+                  }}
+                  placeholder="Enter digits only"
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-950"
+                  required
+                />
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Numbers only. Letters and special characters
+                  are not allowed.
+                </p>
+              </div>
+
+              {/* Account Name - Required */}
+              <div>
+                <label
+                  htmlFor="account-name"
+                  className="text-sm font-bold text-slate-950"
+                >
+                  Account Name{" "}
+                  <span className="text-red-500">*</span>
+                </label>
+
+                <input
+                  id="account-name"
                   type="text"
                   value={accountName}
                   onChange={(event) =>
                     setAccountName(event.target.value)
                   }
-                  placeholder="Name on payment account"
+                  placeholder="Enter name on payment account"
                   className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-950"
+                  autoComplete="name"
+                  required
                 />
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Enter the name registered with your payment
+                  account or bank.
+                </p>
               </div>
 
               {/* Messages */}
@@ -311,7 +322,10 @@ export default function WithdrawPage() {
               )}
 
               {error && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700">
+                <div
+                  role="alert"
+                  className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-6 text-red-700"
+                >
                   {error}
                 </div>
               )}
@@ -326,13 +340,11 @@ export default function WithdrawPage() {
                   ? "Submitting..."
                   : "Submit Withdrawal Request"}
               </button>
-
             </form>
           </div>
 
           {/* Information */}
           <div className="h-fit rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-
             <div className="flex items-center gap-3">
               <ShieldCheck
                 size={22}
@@ -345,7 +357,6 @@ export default function WithdrawPage() {
             </div>
 
             <div className="mt-6 rounded-2xl bg-slate-50 p-5">
-
               <div className="flex justify-between gap-4">
                 <span className="text-sm text-slate-500">
                   Minimum
@@ -375,25 +386,20 @@ export default function WithdrawPage() {
                   Admin Approval
                 </span>
               </div>
-
             </div>
 
             <div className="mt-5 rounded-2xl border border-yellow-200 bg-yellow-50 p-5">
-
               <p className="text-sm font-bold text-slate-950">
                 Important
               </p>
 
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                Your wallet balance will be checked when you submit
-                the request. The money will only be deducted after
-                the withdrawal is approved.
+                Your wallet balance will be checked when you
+                submit the request. The money will only be
+                deducted after the withdrawal is approved.
               </p>
-
             </div>
-
           </div>
-
         </div>
       </div>
     </main>

@@ -1,6 +1,5 @@
 "use client";
-
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bell,
@@ -11,9 +10,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-
 import { createClient } from "@/lib/supabase/client";
-
 type Notification = {
   id: string;
   user_id: string;
@@ -24,12 +21,10 @@ type Notification = {
   reference_id: string | null;
   created_at: string;
 };
-
 type TournamentInvite = {
   id: string;
   status: "pending" | "accepted" | "rejected" | "cancelled";
 };
-
 function getNotificationIcon(type: string) {
   switch (type) {
     case "tournament":
@@ -37,55 +32,73 @@ function getNotificationIcon(type: string) {
     case "result":
     case "prize":
       return <Trophy size={17} />;
-
     case "game_access":
       return <Gamepad2 size={17} />;
-
     case "payment":
     case "wallet":
       return <Wallet size={17} />;
-
     default:
       return <Bell size={17} />;
   }
 }
-
+type HighlightStyle = "yellow" | "green" | "blue" | "red" | "purple" | "bold";
+function renderHighlightedMessage(message: string) {
+  const pattern = /\[\[hl:(yellow|green|blue|red|purple|bold)\]\]([\s\S]*?)\[\[\/hl\]\]/g;
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  let index = 0;
+  const styles: Record<HighlightStyle, string> = {
+    yellow: "rounded bg-amber-100 px-1 py-0.5 font-bold text-amber-900 ring-1 ring-amber-200",
+    green: "rounded bg-emerald-100 px-1 py-0.5 font-bold text-emerald-800 ring-1 ring-emerald-200",
+    blue: "rounded bg-blue-100 px-1 py-0.5 font-bold text-blue-800 ring-1 ring-blue-200",
+    red: "rounded bg-red-100 px-1 py-0.5 font-bold text-red-800 ring-1 ring-red-200",
+    purple: "rounded bg-purple-100 px-1 py-0.5 font-bold text-purple-800 ring-1 ring-purple-200",
+    bold: "font-extrabold text-slate-950",
+  };
+  while ((match = pattern.exec(message)) !== null) {
+    if (match.index > cursor) {
+      parts.push(<span key={`plain-${index++}`}>{message.slice(cursor, match.index)}</span>);
+    }
+    parts.push(
+      <span key={`highlight-${index++}`} className={styles[match[1] as HighlightStyle]}>
+        {match[2]}
+      </span>
+    );
+    cursor = pattern.lastIndex;
+  }
+  if (cursor < message.length) {
+    parts.push(<span key={`plain-${index++}`}>{message.slice(cursor)}</span>);
+  }
+  return parts.length ? parts : message;
+}
 function formatNotificationTime(date: string) {
   const created = new Date(date);
   const now = new Date();
-
   const difference = now.getTime() - created.getTime();
-
   const seconds = Math.floor(difference / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-
   if (seconds < 60) {
     return "Just now";
   }
-
   if (minutes < 60) {
     return `${minutes}m ago`;
   }
-
   if (hours < 24) {
     return `${hours}h ago`;
   }
-
   if (days < 7) {
     return `${days}d ago`;
   }
-
   return created.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
   });
 }
-
 export default function NotificationBell() {
-  const supabase = createClient();
-
+  const supabase = useMemo(() => createClient(), []);
   const [userId, setUserId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [tournamentInvites, setTournamentInvites] = useState<
@@ -96,14 +109,11 @@ export default function NotificationBell() {
   );
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-
   const dropdownRef = useRef<HTMLDivElement>(null);
-
   const unreadCount = notifications.filter(
     (notification) => !notification.is_read
   ).length;
-
-  async function loadNotifications(currentUserId: string) {
+  const loadNotifications = useCallback(async (currentUserId: string) => {
     const { data, error } = await supabase
       .from("notifications")
       .select(
@@ -121,17 +131,13 @@ export default function NotificationBell() {
       .eq("user_id", currentUserId)
       .order("created_at", { ascending: false })
       .limit(20);
-
     if (error) {
       console.error("Error loading notifications:", error);
       setLoading(false);
       return;
     }
-
     const loadedNotifications = (data || []) as Notification[];
-
     setNotifications(loadedNotifications);
-
     const inviteIds = loadedNotifications
       .filter(
         (notification) =>
@@ -139,37 +145,28 @@ export default function NotificationBell() {
           Boolean(notification.reference_id)
       )
       .map((notification) => notification.reference_id as string);
-
     if (inviteIds.length > 0) {
       const { data: inviteRows } = await supabase
         .from("tournament_team_invites")
         .select("id, status")
         .in("id", inviteIds);
-
       const inviteMap: Record<string, TournamentInvite> = {};
-
       (inviteRows || []).forEach((invite) => {
         inviteMap[invite.id] = invite as TournamentInvite;
       });
-
       setTournamentInvites(inviteMap);
     } else {
       setTournamentInvites({});
     }
-
     setLoading(false);
-  }
-
+  }, [supabase]);
   useEffect(() => {
     let mounted = true;
-
     async function initialize() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-
       if (!mounted) return;
-
       if (!user) {
         setUserId(null);
         setNotifications([]);
@@ -177,19 +174,14 @@ export default function NotificationBell() {
         setLoading(false);
         return;
       }
-
       setUserId(user.id);
-
       await loadNotifications(user.id);
     }
-
     initialize();
-
     return () => {
       mounted = false;
     };
-  }, []);
-
+  }, [supabase, loadNotifications]);
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
       if (
@@ -199,17 +191,13 @@ export default function NotificationBell() {
         setOpen(false);
       }
     }
-
     document.addEventListener("mousedown", handleOutsideClick);
-
     return () => {
       document.removeEventListener("mousedown", handleOutsideClick);
     };
   }, []);
-
   useEffect(() => {
     if (!userId) return;
-
     const channel = supabase
       .channel(`notifications-${userId}`)
       .on(
@@ -222,7 +210,6 @@ export default function NotificationBell() {
         },
         (payload) => {
           const newNotification = payload.new as Notification;
-
           setNotifications((current) => [
             newNotification,
             ...current,
@@ -230,24 +217,20 @@ export default function NotificationBell() {
         }
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId]);
-
+  }, [supabase, userId]);
   async function markAsRead(notificationId: string) {
     const { error } = await supabase
       .from("notifications")
       .update({ is_read: true })
       .eq("id", notificationId)
       .eq("user_id", userId);
-
     if (error) {
       console.error("Error marking notification as read:", error);
       return;
     }
-
     setNotifications((current) =>
       current.map((notification) =>
         notification.id === notificationId
@@ -256,21 +239,17 @@ export default function NotificationBell() {
       )
     );
   }
-
   async function markAllAsRead() {
     if (!userId || unreadCount === 0) return;
-
     const { error } = await supabase
       .from("notifications")
       .update({ is_read: true })
       .eq("user_id", userId)
       .eq("is_read", false);
-
     if (error) {
       console.error("Error marking all notifications as read:", error);
       return;
     }
-
     setNotifications((current) =>
       current.map((notification) => ({
         ...notification,
@@ -278,16 +257,13 @@ export default function NotificationBell() {
       }))
     );
   }
-
   async function respondToTournamentInvite(
     inviteId: string,
     accept: boolean,
     notificationId: string
   ) {
     if (!userId) return;
-
     setRespondingInviteId(inviteId);
-
     try {
       const { data, error } = await supabase.rpc(
         "respond_to_tournament_team_invite",
@@ -296,11 +272,9 @@ export default function NotificationBell() {
           accept_invitation: accept,
         }
       );
-
       if (error) {
         throw new Error(error.message);
       }
-
       setTournamentInvites((current) => ({
         ...current,
         [inviteId]: {
@@ -308,7 +282,6 @@ export default function NotificationBell() {
           status: accept ? "accepted" : "rejected",
         },
       }));
-
       setNotifications((current) =>
         current.map((notification) =>
           notification.id === notificationId
@@ -325,7 +298,6 @@ export default function NotificationBell() {
             : notification
         )
       );
-
       if (data) {
         // The RPC returns the tournament team id. Keep the response
         // intentionally local because the captain is notified by the RPC.
@@ -336,22 +308,17 @@ export default function NotificationBell() {
       setRespondingInviteId(null);
     }
   }
-
-
   function handleNotificationClick(notification: Notification) {
     if (!notification.is_read) {
       markAsRead(notification.id);
     }
-
     if (notification.reference_id) {
       setOpen(false);
     }
   }
-
   if (!userId) {
     return null;
   }
-
   return (
     <div ref={dropdownRef} className="relative">
       {/* Bell Button */}
@@ -362,14 +329,12 @@ export default function NotificationBell() {
         className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
       >
         <Bell size={19} />
-
         {unreadCount > 0 && (
           <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white shadow-sm">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
       </button>
-
       {/* Dropdown */}
       {open && (
         <div className="fixed left-3 right-3 top-20 z-[100] max-h-[calc(100vh-96px)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/10 sm:absolute sm:left-auto sm:right-0 sm:top-12 sm:w-[360px] sm:max-h-none">
@@ -379,16 +344,14 @@ export default function NotificationBell() {
               <h3 className="text-sm font-black text-slate-950">
                 Notifications
               </h3>
-
               <p className="mt-0.5 text-xs text-slate-500">
                 {unreadCount > 0
                   ? `${unreadCount} unread notification${
                       unreadCount === 1 ? "" : "s"
                     }`
-                  : "You're all caught up"}
+                  : "You&apos;re all caught up"}
               </p>
             </div>
-
             <div className="flex items-center gap-1">
               {unreadCount > 0 && (
                 <button
@@ -400,7 +363,6 @@ export default function NotificationBell() {
                   <CheckCheck size={17} />
                 </button>
               )}
-
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -410,7 +372,6 @@ export default function NotificationBell() {
               </button>
             </div>
           </div>
-
           {/* Notifications */}
           <div className="max-h-[420px] overflow-y-auto">
             {loading ? (
@@ -431,13 +392,11 @@ export default function NotificationBell() {
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                   <Bell size={21} />
                 </div>
-
                 <h4 className="mt-4 text-sm font-bold text-slate-900">
                   No notifications
                 </h4>
-
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  You'll see tournament, wallet and game updates here.
+                <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
+                  You&apos;ll see tournament, wallet and game updates here.
                 </p>
               </div>
             ) : (
@@ -452,7 +411,6 @@ export default function NotificationBell() {
                   {!notification.is_read && (
                     <span className="absolute left-2 top-5 h-2 w-2 rounded-full bg-yellow-500" />
                   )}
-
                   <div className="flex gap-3 pl-1">
                     <div
                       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
@@ -463,7 +421,6 @@ export default function NotificationBell() {
                     >
                       {getNotificationIcon(notification.type)}
                     </div>
-
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-3">
                         <h4
@@ -475,18 +432,15 @@ export default function NotificationBell() {
                         >
                           {notification.title}
                         </h4>
-
                         {!notification.is_read && (
                           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-yellow-600">
                             New
                           </span>
                         )}
                       </div>
-
-                      <p className="mt-1 text-xs leading-5 text-slate-500">
-                        {notification.message}
+                      <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
+                        {renderHighlightedMessage(notification.message)}
                       </p>
-
                       {notification.type === "tournament" &&
                         notification.reference_id &&
                         tournamentInvites[notification.reference_id] && (
@@ -517,7 +471,6 @@ export default function NotificationBell() {
                                     "Accept"
                                   )}
                                 </button>
-
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -555,12 +508,10 @@ export default function NotificationBell() {
                             )}
                           </div>
                         )}
-
                       <div className="mt-2 flex items-center justify-between">
                         <span className="text-[10px] font-medium text-slate-400">
                           {formatNotificationTime(notification.created_at)}
                         </span>
-
                         {!notification.is_read && (
                           <button
                             type="button"
@@ -581,7 +532,6 @@ export default function NotificationBell() {
               ))
             )}
           </div>
-
           {/* Footer */}
           <div className="border-t border-slate-100 bg-slate-50 px-4 py-3">
             <Link

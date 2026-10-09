@@ -97,25 +97,28 @@ export default function Home() {
     async function loadUpcomingTournaments() {
       setTournamentsLoading(true);
 
-      const { data, error } = await supabase
-        .from("tournaments")
-        .select(`
-          id,
-          title,
-          game,
-          description,
-          tournament_type,
-          entry_fee,
-          prize_pool,
-          max_players,
-          registered_players,
-          start_date,
-          status,
-          image
-        `)
-        .eq("status", "upcoming")
-        .order("start_date", { ascending: true })
-        .limit(3);
+      const now = new Date().toISOString();
+
+const { data, error } = await supabase
+  .from("tournaments")
+  .select(`
+    id,
+    title,
+    game,
+    description,
+    tournament_type,
+    entry_fee,
+    prize_pool,
+    max_players,
+    registered_players,
+    start_date,
+    status,
+    image
+  `)
+  .eq("status", "upcoming")
+  .gte("start_date", now)
+  .order("start_date", { ascending: true })
+  .limit(3);
 
       if (!error && data) {
         setTournaments(data as Tournament[]);
@@ -1184,61 +1187,57 @@ export default function Home() {
           STATS
       ===================================================== */}
 
-      <section
-        className="border-y border-slate-200 bg-slate-50"
-      >
-        <div className="mx-auto grid max-w-7xl grid-cols-2 px-5 py-10 sm:px-6 md:grid-cols-4">
+{false && (
+  <section
+    className="border-y border-slate-200 bg-slate-50"
+  >
+    <div className="mx-auto grid max-w-7xl grid-cols-2 px-5 py-10 sm:px-6 md:grid-cols-4">
+      <div className="border-b border-slate-200 p-5 text-center md:border-b-0 md:border-r">
+        <p className="text-3xl font-black text-slate-950">
+          {statsLoading
+            ? "—"
+            : formatNumber(stats.total_players)}
+        </p>
+        <p className="mt-1 text-sm text-slate-500">
+          Players
+        </p>
+      </div>
 
-          <div className="border-b border-slate-200 p-5 text-center md:border-b-0 md:border-r">
-            <p className="text-3xl font-black text-slate-950">
-              {statsLoading
-                ? "—"
-                : formatNumber(stats.total_players)}
-            </p>
+      <div className="border-b border-slate-200 p-5 text-center md:border-b-0 md:border-r">
+        <p className="text-3xl font-black text-slate-950">
+          {statsLoading
+            ? "—"
+            : formatNumber(stats.total_tournaments)}
+        </p>
+        <p className="mt-1 text-sm text-slate-500">
+          Tournaments Hosted
+        </p>
+      </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Players
-            </p>
-          </div>
+      <div className="border-b border-slate-200 p-5 text-center md:border-b-0 md:border-r">
+        <p className="text-3xl font-black text-slate-950">
+          {statsLoading
+            ? "—"
+            : formatPrize(stats.total_prizes)}
+        </p>
+        <p className="mt-1 text-sm text-slate-500">
+          Rewards Distributed
+        </p>
+      </div>
 
-          <div className="border-b border-slate-200 p-5 text-center md:border-b-0 md:border-r">
-            <p className="text-3xl font-black text-slate-950">
-              {statsLoading
-                ? "—"
-                : formatNumber(stats.total_tournaments)}
-            </p>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Tournaments Hosted
-            </p>
-          </div>
-
-          <div className="border-b border-slate-200 p-5 text-center md:border-b-0 md:border-r">
-            <p className="text-3xl font-black text-slate-950">
-              {statsLoading
-                ? "—"
-                : formatPrize(stats.total_prizes)}
-            </p>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Rewards Distributed
-            </p>
-          </div>
-
-          <div className="p-5 text-center">
-            <p className="text-3xl font-black text-slate-950">
-              {statsLoading
-                ? "—"
-                : formatNumber(stats.completed_tournaments)}
-            </p>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Completed Tournaments
-            </p>
-          </div>
-
-        </div>
-      </section>
+      <div className="p-5 text-center">
+        <p className="text-3xl font-black text-slate-950">
+          {statsLoading
+            ? "—"
+            : formatNumber(stats.completed_tournaments)}
+        </p>
+        <p className="mt-1 text-sm text-slate-500">
+          Completed Tournaments
+        </p>
+      </div>
+    </div>
+  </section>
+)}
 
       {/* =====================================================
           COMMUNITY
