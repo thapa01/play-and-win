@@ -76,6 +76,11 @@ export default function TournamentRegisterPage() {
   const [captainInGameName, setCaptainInGameName] = useState("");
 
   const [teamId, setTeamId] = useState<string | null>(null);
+
+  /*
+   * teamMemberCount = TOTAL players in the team, INCLUDING the captain.
+   * (0 means no team has been created yet.)
+   */
   const [teamMemberCount, setTeamMemberCount] = useState(0);
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
   const [pendingInvites, setPendingInvites] = useState<
@@ -85,6 +90,20 @@ export default function TournamentRegisterPage() {
     { id: string; username: string }[]
   >([]);
   const [inviteUsername, setInviteUsername] = useState("");
+  const [teammateGamingId, setTeammateGamingId] = useState("");
+  const [teammateInGameName, setTeammateInGameName] = useState("");
+
+  // Squad mode: all teammate slots are shown at once and filled in one go.
+  const [squadRows, setSquadRows] = useState<
+    { username: string; gamingId: string; inGameName: string }[]
+  >([
+    { username: "", gamingId: "", inGameName: "" },
+    { username: "", gamingId: "", inGameName: "" },
+    { username: "", gamingId: "", inGameName: "" },
+  ]);
+  const [addedTeammates, setAddedTeammates] = useState<
+    { id: string; username: string }[]
+  >([]);
   const [sendingInvite, setSendingInvite] = useState(false);
   const [changingInviteId, setChangingInviteId] = useState<string | null>(
     null
@@ -115,6 +134,7 @@ export default function TournamentRegisterPage() {
       setTeamMemberCount(0);
       setPendingInviteCount(0);
       setPendingInvites([]);
+      setAddedTeammates([]);
       setDeclinedInvites([]);
       return;
     }
@@ -122,13 +142,13 @@ export default function TournamentRegisterPage() {
     setTeamId(team.id);
 
     const [
-      { count: memberCount },
+      { data: memberRows },
       { data: pendingInviteRows },
       { data: declinedInviteRows },
     ] = await Promise.all([
       supabase
         .from("tournament_team_members")
-        .select("id", { count: "exact", head: true })
+        .select("id, user_id")
         .eq("tournament_team_id", team.id),
 
       supabase
@@ -146,6 +166,18 @@ export default function TournamentRegisterPage() {
         .order("responded_at", { ascending: false }),
     ]);
 
+    /*
+     * FIX #1:
+     * tournament_team_members only contains the teammates, NOT the captain.
+     * The captain must be counted as well, otherwise a Duo accepts
+     * Captain + 2 teammates (3 players) and a Squad accepts 5 players.
+     */
+    const teammateRows = (
+      (memberRows || []) as { id: string; user_id: string }[]
+    ).filter((row) => row.user_id !== userId);
+    const teammateCount = teammateRows.length;
+    const totalTeamPlayers = teammateCount + 1; // +1 for the captain
+
     const pendingRows = (pendingInviteRows || []) as {
       id: string;
       invited_user_id: string;
@@ -160,6 +192,7 @@ export default function TournamentRegisterPage() {
       new Set([
         ...pendingRows.map((row) => row.invited_user_id),
         ...declinedRows.map((row) => row.invited_user_id),
+        ...teammateRows.map((row) => row.user_id),
       ])
     );
 
@@ -179,6 +212,27 @@ export default function TournamentRegisterPage() {
       );
     }
 
+    /*
+     * Teammate usernames come from a secure database function, because
+     * row-level security usually stops one player from reading another
+     * player's profile directly (which caused "Unknown player").
+     */
+    const { data: teammateNameRows } = await supabase.rpc(
+      "get_my_team_teammates",
+      { target_tournament_id: tournamentId }
+    );
+
+    (
+      (teammateNameRows || []) as {
+        user_id: string;
+        username: string | null;
+      }[]
+    ).forEach((row) => {
+      if (row.username) {
+        usernameById.set(row.user_id, row.username);
+      }
+    });
+
     const inviteDetails = pendingRows.map((row) => ({
       id: row.id,
       username: usernameById.get(row.invited_user_id) || "Unknown player",
@@ -189,7 +243,13 @@ export default function TournamentRegisterPage() {
       username: usernameById.get(row.invited_user_id) || "Unknown player",
     }));
 
-    setTeamMemberCount(memberCount ?? 0);
+    setAddedTeammates(
+      teammateRows.map((row) => ({
+        id: row.id,
+        username: usernameById.get(row.user_id) || "Unknown player",
+      }))
+    );
+    setTeamMemberCount(totalTeamPlayers);
     setPendingInviteCount(inviteDetails.length);
     setPendingInvites(inviteDetails);
     setDeclinedInvites(declinedDetails);
@@ -248,15 +308,15 @@ export default function TournamentRegisterPage() {
 
         setCaptainUsername(profile?.username || "");
 
-        const { data: gameProfile } = await supabase
-          .from("player_game_profiles")
+        const { data: savedDetails } = await supabase
+          .from("tournament_player_game_details")
           .select("gaming_id, in_game_name")
+          .eq("tournament_id", found.id)
           .eq("user_id", user.id)
-          .eq("game", found.game)
           .maybeSingle();
 
-        setCaptainGamingId(gameProfile?.gaming_id || "");
-        setCaptainInGameName(gameProfile?.in_game_name || "");
+        setCaptainGamingId(savedDetails?.gaming_id || "");
+        setCaptainInGameName(savedDetails?.in_game_name || "");
 
         if (found.tournament_mode !== "solo") {
           await loadTournamentTeam(user.id, found.id);
@@ -308,14 +368,23 @@ export default function TournamentRegisterPage() {
     setError("");
     setMessage("");
 
+    // Prevent double clicks / double Enter presses
+    if (sendingInvite) {
+      return;
+    }
+
     if (!tournament || tournament.tournament_mode === "solo") {
       return;
     }
 
     const username = inviteUsername.trim();
+    const gamingId = teammateGamingId.trim();
+    const inGameName = teammateInGameName.trim();
 
-    if (!username) {
-      setError("Enter your teammate's Play & Win username.");
+    if (!username || !gamingId || !inGameName) {
+      setError(
+        "Enter your teammate's username, gaming ID, and in-game name."
+      );
       return;
     }
 
@@ -326,8 +395,13 @@ export default function TournamentRegisterPage() {
     } = await supabase.auth.getUser();
 
     if (!user) {
-      router.push(
-        `/login?redirect=/tournaments/${slug}/register`
+      router.push(`/login?redirect=/tournaments/${slug}/register`);
+      return;
+    }
+
+    if (!captainGamingId.trim() || !captainInGameName.trim()) {
+      setError(
+        `Enter your Captain ${tournament.game} Gaming ID and in-game name above before adding your teammate.`
       );
       return;
     }
@@ -337,6 +411,7 @@ export default function TournamentRegisterPage() {
         ? 2
         : Number(tournament.team_size || 4);
 
+    // teamMemberCount already includes the captain
     if (teamMemberCount + pendingInviteCount >= teamSize) {
       setError("Your tournament team is already full.");
       return;
@@ -345,34 +420,236 @@ export default function TournamentRegisterPage() {
     setSendingInvite(true);
 
     try {
-      const { data: inviteId, error: inviteError } =
-        await supabase.rpc(
-          "invite_player_to_tournament_team",
-          {
-            target_tournament_id: tournament.id,
-            target_username: username,
-          }
-        );
+      const captainSaveError = await saveCaptainGameDetails(user.id);
 
-      if (inviteError) {
-        throw new Error(inviteError.message);
+      if (captainSaveError) {
+        throw new Error(captainSaveError);
       }
 
-      if (!inviteId) {
-        throw new Error("Unable to create the invitation.");
+      const { data: addedTeamId, error: teamError } = await supabase.rpc(
+        "add_tournament_teammate_direct",
+        {
+          target_tournament_id: tournament.id,
+          target_username: username,
+          target_gaming_id: gamingId,
+          target_in_game_name: inGameName,
+        }
+      );
+
+      if (teamError) {
+        throw new Error(teamError.message);
+      }
+
+      if (!addedTeamId) {
+        throw new Error("Unable to add your teammate.");
       }
 
       setInviteUsername("");
+      setTeammateGamingId("");
+      setTeammateInGameName("");
+
       await loadTournamentTeam(user.id, tournament.id);
 
       setMessage(
-        `Invitation sent to @${username.replace(/^@/, "")}.`
+        `@${username.replace(/^@/, "")} has been added to your team successfully.`
       );
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to send invitation."
+          : "Unable to add your teammate."
+      );
+    } finally {
+      setSendingInvite(false);
+    }
+  }
+
+  async function saveCaptainGameDetails(
+    userId: string
+  ): Promise<string | null> {
+    if (!tournament) return "Tournament not found.";
+
+    const supabase = createClient();
+
+    const { error: saveError } = await supabase
+      .from("tournament_player_game_details")
+      .upsert(
+        {
+          tournament_id: tournament.id,
+          user_id: userId,
+          game: tournament.game,
+          gaming_id: captainGamingId.trim(),
+          in_game_name: captainInGameName.trim(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "tournament_id,user_id" }
+      );
+
+    if (saveError) {
+      return `Unable to save your ${tournament.game} gaming details: ${saveError.message}`;
+    }
+
+    return null;
+  }
+
+  function updateSquadRow(
+    index: number,
+    field: "username" | "gamingId" | "inGameName",
+    value: string
+  ) {
+    setSquadRows((rows) => {
+      const next = [...rows];
+      while (next.length <= index) {
+        next.push({ username: "", gamingId: "", inGameName: "" });
+      }
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  }
+
+  async function addSquadTeammates() {
+    setError("");
+    setMessage("");
+
+    if (sendingInvite) return;
+    if (!tournament || tournament.tournament_mode !== "squad") return;
+
+    const slotsToFill = teamSlotsRemaining;
+
+    if (slotsToFill <= 0) {
+      setError("Your tournament team is already full.");
+      return;
+    }
+
+    if (!captainGamingId.trim() || !captainInGameName.trim()) {
+      setError(
+        `Enter your Captain ${tournament.game} Gaming ID and in-game name above before adding teammates.`
+      );
+      return;
+    }
+
+    const alreadyAdded = Math.max(teamMemberCount - 1, 0);
+    const emptyRow = { username: "", gamingId: "", inGameName: "" };
+    const rows = Array.from(
+      { length: slotsToFill },
+      (_, i) => squadRows[i] ?? emptyRow
+    );
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      if (
+        !row.username.trim() ||
+        !row.gamingId.trim() ||
+        !row.inGameName.trim()
+      ) {
+        setError(
+          `Enter the username, gaming ID, and in-game name for Teammate ${alreadyAdded + i + 1}.`
+        );
+        return;
+      }
+    }
+
+    // Block duplicates: the captain, existing teammates, or the same name twice.
+    const normalize = (value: string) =>
+      value.trim().replace(/^@/, "").toLowerCase();
+
+    const seen = new Set<string>([
+      normalize(captainUsername),
+      ...addedTeammates.map((mate) => normalize(mate.username)),
+    ]);
+
+    for (let i = 0; i < rows.length; i++) {
+      const key = normalize(rows[i].username);
+
+      if (seen.has(key)) {
+        setError(
+          `@${key} is already in your team or has been entered twice.`
+        );
+        return;
+      }
+
+      seen.add(key);
+    }
+
+    const supabase = createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.push(`/login?redirect=/tournaments/${slug}/register`);
+      return;
+    }
+
+    setSendingInvite(true);
+
+    try {
+      const captainSaveError = await saveCaptainGameDetails(user.id);
+
+      if (captainSaveError) {
+        throw new Error(captainSaveError);
+      }
+
+      const addedIndexes: number[] = [];
+      let failureMessage = "";
+
+      // Teammates are added one by one using the existing secure function.
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+
+        const { data: addedTeamId, error: rpcError } = await supabase.rpc(
+          "add_tournament_teammate_direct",
+          {
+            target_tournament_id: tournament.id,
+            target_username: row.username.trim(),
+            target_gaming_id: row.gamingId.trim(),
+            target_in_game_name: row.inGameName.trim(),
+          }
+        );
+
+        if (rpcError || !addedTeamId) {
+          failureMessage = `Teammate ${alreadyAdded + i + 1} (@${normalize(
+            row.username
+          )}): ${rpcError?.message || "Unable to add your teammate."}`;
+          break;
+        }
+
+        addedIndexes.push(i);
+      }
+
+      // Always reload the real team from the database.
+      await loadTournamentTeam(user.id, tournament.id);
+
+      // Keep only the rows that were NOT added, so they can be corrected.
+      const leftover = rows.filter((_, i) => !addedIndexes.includes(i));
+      const nextRows = [...leftover];
+
+      while (nextRows.length < Math.max(tournamentTeamSize - 1, 1)) {
+        nextRows.push({ ...emptyRow });
+      }
+
+      setSquadRows(nextRows);
+
+      if (failureMessage) {
+        setError(
+          addedIndexes.length > 0
+            ? `${addedIndexes.length} teammate(s) were added, but ${failureMessage}`
+            : failureMessage
+        );
+      } else {
+        setMessage(
+          addedIndexes.length === 1
+            ? "Teammate added to your team successfully."
+            : `${addedIndexes.length} teammates added to your team successfully.`
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to add your teammates."
       );
     } finally {
       setSendingInvite(false);
@@ -421,7 +698,6 @@ export default function TournamentRegisterPage() {
       setChangingInviteId(null);
     }
   }
-
 
   async function handleRegister() {
     setError("");
@@ -501,7 +777,8 @@ export default function TournamentRegisterPage() {
       return;
     }
 
-    if (isPaid &&
+    if (
+      isPaid &&
       walletBalance !== null &&
       walletBalance < Number(tournament.entry_fee)
     ) {
@@ -517,16 +794,17 @@ export default function TournamentRegisterPage() {
 
     try {
       const { error: gameProfileError } = await supabase
-        .from("player_game_profiles")
+        .from("tournament_player_game_details")
         .upsert(
           {
+            tournament_id: tournament.id,
             user_id: user.id,
             game: tournament.game,
             gaming_id: captainGamingId.trim(),
             in_game_name: captainInGameName.trim(),
             updated_at: new Date().toISOString(),
           },
-          { onConflict: "user_id,game" }
+          { onConflict: "tournament_id,user_id" }
         );
 
       if (gameProfileError) {
@@ -541,19 +819,13 @@ export default function TournamentRegisterPage() {
        */
       const { error: registrationError } =
         mode === "solo"
-          ? await supabase.rpc(
-              "register_for_tournament_v2",
-              {
-                target_tournament_id: tournament.id,
-                target_squad_id: null,
-              }
-            )
-          : await supabase.rpc(
-              "register_tournament_team",
-              {
-                target_tournament_id: tournament.id,
-              }
-            );
+          ? await supabase.rpc("register_for_tournament_v2", {
+              target_tournament_id: tournament.id,
+              target_squad_id: null,
+            })
+          : await supabase.rpc("register_tournament_team", {
+              target_tournament_id: tournament.id,
+            });
 
       if (registrationError) {
         let friendlyMessage = registrationError.message;
@@ -581,22 +853,32 @@ export default function TournamentRegisterPage() {
           friendlyMessage = registrationError.message;
         } else if (
           rawMessage.includes("gaming profile") ||
-          rawMessage.includes("game profile")
+          rawMessage.includes("game profile") ||
+          rawMessage.includes("gaming details") ||
+          rawMessage.includes("gaming id") ||
+          rawMessage.includes("in-game name")
         ) {
-          friendlyMessage =
-            `All players must have a ${tournament.game} gaming profile before registration.`;
+          friendlyMessage = registrationError.message;
         }
 
         throw new Error(friendlyMessage);
       }
 
       await refreshData(user.id, tournament.id);
-      setTeamId(null);
-      setTeamMemberCount(0);
-      setPendingInviteCount(0);
-      setPendingInvites([]);
-      setDeclinedInvites([]);
+
+      /*
+       * FIX #2:
+       * Previously the team state was reset to 0 here, which made the
+       * "Registration Confirmed" screen think the team was empty and
+       * show the Add Teammate form again. Reload the real team instead.
+       */
+      if (mode !== "solo") {
+        await loadTournamentTeam(user.id, tournament.id);
+      }
+
       setInviteUsername("");
+      setTeammateGamingId("");
+      setTeammateInGameName("");
       setRegistrationConfirmed(true);
 
       setMessage(
@@ -615,8 +897,7 @@ export default function TournamentRegisterPage() {
     }
   }
 
-  const tournamentMode =
-    tournament?.tournament_mode || "solo";
+  const tournamentMode = tournament?.tournament_mode || "solo";
 
   const tournamentTeamSize =
     tournamentMode === "solo"
@@ -630,10 +911,43 @@ export default function TournamentRegisterPage() {
     (Boolean(teamId) &&
       teamMemberCount + pendingInviteCount >= tournamentTeamSize);
 
-  const teamSlotsUsed = teamMemberCount + pendingInviteCount;
+  // The captain always occupies one slot, even before the team row exists.
+  const teamSlotsUsed = Math.max(teamMemberCount, 1) + pendingInviteCount;
   const teamSlotsRemaining = Math.max(
     tournamentTeamSize - teamSlotsUsed,
     0
+  );
+
+  const squadRowsFilled = Array.from(
+    { length: teamSlotsRemaining },
+    (_, i) => squadRows[i]
+  ).every(
+    (row) =>
+      Boolean(row) &&
+      row.username.trim() !== "" &&
+      row.gamingId.trim() !== "" &&
+      row.inGameName.trim() !== ""
+  );
+
+  // Squad teammate slots that are completely filled in (live preview).
+  const filledSquadSlots =
+    tournamentMode === "squad"
+      ? Array.from({ length: teamSlotsRemaining }, (_, i) => squadRows[i]).filter(
+          (row) =>
+            Boolean(row) &&
+            row.username.trim() !== "" &&
+            row.gamingId.trim() !== "" &&
+            row.inGameName.trim() !== ""
+        ).length
+      : 0;
+
+  // Counter shown in "Your Team": captain + added teammates + filled slots.
+  const playersCounter = Math.min(
+    tournamentTeamSize,
+    Math.max(
+      teamMemberCount,
+      captainGamingId.trim() && captainInGameName.trim() ? 1 : 0
+    ) + filledSquadSlots
   );
 
   const isPaid = useMemo(
@@ -644,9 +958,7 @@ export default function TournamentRegisterPage() {
   const isFull = useMemo(() => {
     if (!tournament) return false;
 
-    return (
-      tournament.registered_players >= tournament.max_players
-    );
+    return tournament.registered_players >= tournament.max_players;
   }, [tournament]);
 
   const remainingPlayers = useMemo(() => {
@@ -674,9 +986,7 @@ export default function TournamentRegisterPage() {
     teamReady;
 
   const afterBalance =
-    isPaid &&
-    walletBalance !== null &&
-    tournament
+    isPaid && walletBalance !== null && tournament
       ? walletBalance - Number(tournament.entry_fee)
       : walletBalance;
 
@@ -710,10 +1020,7 @@ export default function TournamentRegisterPage() {
           </Link>
 
           <div className="mt-6 rounded-3xl border border-red-200 bg-white p-10 text-center shadow-sm">
-            <AlertCircle
-              className="mx-auto text-red-500"
-              size={40}
-            />
+            <AlertCircle className="mx-auto text-red-500" size={40} />
 
             <p className="mt-4 font-black text-red-600">
               {error || "Tournament not found."}
@@ -822,7 +1129,8 @@ export default function TournamentRegisterPage() {
               </p>
 
               <p className="text-sm text-slate-500">
-                {tournamentTeamSize} player{tournamentTeamSize !== 1 ? "s" : ""} per team
+                {tournamentTeamSize} player
+                {tournamentTeamSize !== 1 ? "s" : ""} per team
               </p>
             </div>
 
@@ -838,9 +1146,7 @@ export default function TournamentRegisterPage() {
                 {formatMoney(Number(tournament.prize_pool))}
               </p>
 
-              <p className="text-sm text-slate-500">
-                Total rewards
-              </p>
+              <p className="text-sm text-slate-500">Total rewards</p>
             </div>
           </div>
         </div>
@@ -889,39 +1195,78 @@ export default function TournamentRegisterPage() {
 
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-black uppercase tracking-wide text-yellow-700">
-                          {tournamentMode === "duo" ? "Duo Team Management" : "Squad Team Management"}
+                          {tournamentMode === "duo"
+                            ? "Duo Team Management"
+                            : "Squad Team Management"}
                         </p>
 
                         <p className="mt-1 text-sm leading-6 text-slate-600">
-                          You have already paid for this team. If a teammate declines, you can invite another player without paying again.
+                          You have already paid for this team. If a teammate
+                          declines, you can invite another player without
+                          paying again.
                         </p>
 
                         <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
                           <div className="flex items-center justify-between gap-3">
                             <div>
-                              <p className="text-xs font-black uppercase tracking-wide text-slate-400">Captain</p>
-                              <p className="mt-1 font-black text-slate-950">@{captainUsername.replace(/^@/, "")}</p>
+                              <p className="text-xs font-black uppercase tracking-wide text-slate-400">
+                                Captain
+                              </p>
+                              <p className="mt-1 font-black text-slate-950">
+                                @{captainUsername.replace(/^@/, "")}
+                              </p>
                             </div>
 
                             <div className="rounded-xl bg-slate-100 px-3 py-2 text-center">
                               <p className="text-lg font-black text-slate-950">
-                                {teamMemberCount}
-                                <span className="text-slate-400">/{tournamentTeamSize}</span>
+                                {Math.max(1, teamMemberCount)}
+                                <span className="text-slate-400">
+                                  /{tournamentTeamSize}
+                                </span>
                               </p>
-                              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Accepted</p>
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                                Accepted
+                              </p>
                             </div>
                           </div>
 
                           {pendingInviteCount > 0 && (
                             <div className="mt-4 space-y-2">
                               {pendingInvites.map((invite) => (
-                                <div key={invite.id} className="flex items-center justify-between gap-3 rounded-xl border border-yellow-200 bg-yellow-50 px-3 py-3">
+                                <div
+                                  key={invite.id}
+                                  className="flex items-center justify-between gap-3 rounded-xl border border-yellow-200 bg-yellow-50 px-3 py-3"
+                                >
                                   <div className="min-w-0">
-                                    <p className="text-[10px] font-black uppercase tracking-wide text-yellow-700">Invitation pending</p>
-                                    <p className="mt-0.5 truncate text-sm font-black text-slate-950">@{invite.username.replace(/^@/, "")}</p>
+                                    <p className="text-[10px] font-black uppercase tracking-wide text-yellow-700">
+                                      Invitation pending
+                                    </p>
+                                    <p className="mt-0.5 truncate text-sm font-black text-slate-950">
+                                      @{invite.username.replace(/^@/, "")}
+                                    </p>
                                   </div>
-                                  <button type="button" onClick={() => changeTournamentInvite(invite.id)} disabled={changingInviteId !== null || sendingInvite} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-red-300 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50">
-                                    {changingInviteId === invite.id ? <> <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-transparent" /> Changing... </> : <> <X size={14} /> Change Player </>}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      changeTournamentInvite(invite.id)
+                                    }
+                                    disabled={
+                                      changingInviteId !== null ||
+                                      sendingInvite
+                                    }
+                                    className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-red-300 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {changingInviteId === invite.id ? (
+                                      <>
+                                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-transparent" />
+                                        Changing...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <X size={14} />
+                                        Change Player
+                                      </>
+                                    )}
                                   </button>
                                 </div>
                               ))}
@@ -931,39 +1276,121 @@ export default function TournamentRegisterPage() {
                           {declinedInvites.length > 0 && (
                             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
                               <div className="flex items-start gap-3">
-                                <X size={18} className="mt-0.5 shrink-0 text-red-500" />
+                                <X
+                                  size={18}
+                                  className="mt-0.5 shrink-0 text-red-500"
+                                />
                                 <div>
-                                  <p className="text-sm font-black text-red-700">Teammate declined the invitation</p>
+                                  <p className="text-sm font-black text-red-700">
+                                    Teammate declined the invitation
+                                  </p>
                                   {declinedInvites.map((invite) => (
-                                    <p key={invite.id} className="mt-1 text-xs leading-5 text-red-600">@{invite.username.replace(/^@/, "")} declined.</p>
+                                    <p
+                                      key={invite.id}
+                                      className="mt-1 text-xs leading-5 text-red-600"
+                                    >
+                                      @{invite.username.replace(/^@/, "")}{" "}
+                                      declined.
+                                    </p>
                                   ))}
-                                  <p className="mt-2 text-xs leading-5 text-red-600">Your payment and tournament registration remain active. Invite another player to complete your Duo.</p>
+                                  <p className="mt-2 text-xs leading-5 text-red-600">
+                                    Your payment and tournament registration
+                                    remain active. Invite another player to
+                                    complete your Duo.
+                                  </p>
                                 </div>
                               </div>
                             </div>
                           )}
 
-                          {teamSlotsRemaining > 0 && pendingInviteCount === 0 && (
-                            <>
-                              <label className="mt-5 block text-xs font-black uppercase tracking-wide text-slate-400">Invite Another Player</label>
-                              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                                <div className="relative flex-1">
-                                  <UserPlus size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                  <input type="text" value={inviteUsername} onChange={(e) => setInviteUsername(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendTournamentInvite(); } }} disabled={sendingInvite} placeholder="@player3" className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100" />
-                                </div>
-                                <button type="button" onClick={sendTournamentInvite} disabled={sendingInvite || !inviteUsername.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50">
-                                  {sendingInvite ? <> <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> Sending... </> : <> <UserPlus size={17} /> Send Invitation </>}
-                                </button>
-                              </div>
-                              <p className="mt-2 text-xs leading-5 text-slate-400">Player 3 only needs their Play & Win username. They do not need to pay. Once they accept, they will be added to this same Duo team.</p>
-                            </>
-                          )}
+                          {teamSlotsRemaining > 0 &&
+                            pendingInviteCount === 0 && (
+                              <>
+                                <label className="mt-5 block text-xs font-black uppercase tracking-wide text-slate-400">
+                                  Add Teammate Directly
+                                </label>
 
-                          {teamSlotsRemaining === 0 && pendingInviteCount === 0 && (
-                            <div className="mt-4 flex items-center gap-2 rounded-xl bg-green-50 px-3 py-2.5 text-sm font-black text-green-700">
-                              <CheckCircle2 size={17} /> Your team is complete.
-                            </div>
-                          )}
+                                <div className="mt-2 flex flex-col gap-3">
+                                  <div className="relative">
+                                    <UserPlus
+                                      size={17}
+                                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={inviteUsername}
+                                      onChange={(e) =>
+                                        setInviteUsername(e.target.value)
+                                      }
+                                      disabled={sendingInvite || registering}
+                                      placeholder="Play & Win username (e.g. @player3)"
+                                      className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                                    />
+                                  </div>
+
+                                  <input
+                                    type="text"
+                                    value={teammateGamingId}
+                                    onChange={(e) =>
+                                      setTeammateGamingId(e.target.value)
+                                    }
+                                    disabled={sendingInvite || registering}
+                                    placeholder="Teammate's gaming ID"
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                                  />
+
+                                  <input
+                                    type="text"
+                                    value={teammateInGameName}
+                                    onChange={(e) =>
+                                      setTeammateInGameName(e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        sendTournamentInvite();
+                                      }
+                                    }}
+                                    disabled={sendingInvite || registering}
+                                    placeholder="Teammate's in-game name"
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                                  />
+
+                                  <button
+                                    type="button"
+                                    onClick={sendTournamentInvite}
+                                    disabled={
+                                      sendingInvite ||
+                                      registering ||
+                                      !inviteUsername.trim() ||
+                                      !teammateGamingId.trim() ||
+                                      !teammateInGameName.trim()
+                                    }
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {sendingInvite ? (
+                                      <>
+                                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                        Adding Teammate...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <UserPlus size={17} />
+                                        Add Teammate
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+
+                          {teamSlotsRemaining === 0 &&
+                            pendingInviteCount === 0 && (
+                              <div className="mt-4 flex items-center gap-2 rounded-xl bg-green-50 px-3 py-2.5 text-sm font-black text-green-700">
+                                <CheckCircle2 size={17} /> Your team is
+                                complete.
+                              </div>
+                            )}
                         </div>
                       </div>
                     </div>
@@ -971,10 +1398,16 @@ export default function TournamentRegisterPage() {
                 )}
 
                 <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
-                  <Link href="/dashboard/my-tournaments" className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 py-3.5 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950">
+                  <Link
+                    href="/dashboard/my-tournaments"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 py-3.5 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950"
+                  >
                     View My Tournament <ChevronRight size={17} />
                   </Link>
-                  <Link href="/dashboard/game-access" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3.5 text-sm font-black text-slate-700 transition hover:border-slate-950 hover:text-slate-950">
+                  <Link
+                    href="/dashboard/game-access"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3.5 text-sm font-black text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
+                  >
                     Game Access
                   </Link>
                 </div>
@@ -991,8 +1424,8 @@ export default function TournamentRegisterPage() {
                   </h2>
 
                   <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
-                    Review the tournament details below before
-                    confirming your entry.
+                    Review the tournament details below before confirming
+                    your entry.
                   </p>
                 </div>
 
@@ -1005,11 +1438,14 @@ export default function TournamentRegisterPage() {
 
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-black uppercase tracking-wide text-yellow-700">
-                        {tournamentMode === "solo" ? "Your Game Details" : "Captain Game Details"}
+                        {tournamentMode === "solo"
+                          ? "Your Game Details"
+                          : "Captain Game Details"}
                       </p>
 
                       <p className="mt-1 text-sm leading-6 text-slate-600">
-                        Enter the {tournament.game} details you will use in this tournament.
+                        Enter the {tournament.game} details you will use in
+                        this tournament.
                       </p>
 
                       <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -1018,7 +1454,9 @@ export default function TournamentRegisterPage() {
                             Play & Win Username
                           </label>
                           <div className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-black text-slate-700">
-                            {captainUsername ? `@${captainUsername.replace(/^@/, "")}` : "Loading..."}
+                            {captainUsername
+                              ? `@${captainUsername.replace(/^@/, "")}`
+                              : "Loading..."}
                           </div>
                           <p className="mt-1 text-[11px] text-slate-400">
                             Your account username
@@ -1032,7 +1470,9 @@ export default function TournamentRegisterPage() {
                           <input
                             type="text"
                             value={captainGamingId}
-                            onChange={(e) => setCaptainGamingId(e.target.value)}
+                            onChange={(e) =>
+                              setCaptainGamingId(e.target.value)
+                            }
                             disabled={registering}
                             placeholder="Enter your Gaming ID"
                             className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
@@ -1046,7 +1486,9 @@ export default function TournamentRegisterPage() {
                           <input
                             type="text"
                             value={captainInGameName}
-                            onChange={(e) => setCaptainInGameName(e.target.value)}
+                            onChange={(e) =>
+                              setCaptainInGameName(e.target.value)
+                            }
                             disabled={registering}
                             placeholder="Enter your in-game name"
                             className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
@@ -1088,10 +1530,7 @@ export default function TournamentRegisterPage() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-3">
                         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100">
-                          <Wallet
-                            size={20}
-                            className="text-slate-700"
-                          />
+                          <Wallet size={20} className="text-slate-700" />
                         </div>
 
                         <div>
@@ -1115,20 +1554,19 @@ export default function TournamentRegisterPage() {
                       </Link>
                     </div>
 
-                    {walletBalance !== null &&
-                      !insufficientBalance && (
-                        <div className="mt-5 rounded-xl bg-green-50 px-4 py-3">
-                          <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="font-semibold text-green-700">
-                              Balance after registration
-                            </span>
+                    {walletBalance !== null && !insufficientBalance && (
+                      <div className="mt-5 rounded-xl bg-green-50 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                          <span className="font-semibold text-green-700">
+                            Balance after registration
+                          </span>
 
-                            <span className="font-black text-green-700">
-                              {formatMoney(afterBalance ?? 0)}
-                            </span>
-                          </div>
+                          <span className="font-black text-green-700">
+                            {formatMoney(afterBalance ?? 0)}
+                          </span>
                         </div>
-                      )}
+                      </div>
+                    )}
 
                     {insufficientBalance && (
                       <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4">
@@ -1180,7 +1618,8 @@ export default function TournamentRegisterPage() {
                         </p>
 
                         <p className="mt-1 text-xs leading-5 text-green-600">
-                          You can continue setting up your team and confirm registration when ready.
+                          You can continue setting up your team and confirm
+                          registration when ready.
                         </p>
                       </div>
                     </div>
@@ -1203,9 +1642,8 @@ export default function TournamentRegisterPage() {
                         </p>
 
                         <p className="mt-1 text-sm font-semibold text-slate-700">
-                          {tournamentMode === "duo"
-                            ? "Add the Play & Win username of the player you want to play with."
-                            : `Add ${tournamentTeamSize - 1} teammate${tournamentTeamSize - 1 !== 1 ? "s" : ""} for your ${tournamentTeamSize}-player Squad.`}
+                          Add each teammate's Play & Win username, gaming ID,
+                          and in-game name.
                         </p>
 
                         <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
@@ -1217,157 +1655,269 @@ export default function TournamentRegisterPage() {
                               <p className="mt-1 font-black text-slate-950">
                                 Captain
                               </p>
-                              <p className="text-sm text-slate-500">
-                                You
-                              </p>
+                              <p className="text-sm text-slate-500">You</p>
                             </div>
 
                             <div className="rounded-xl bg-slate-100 px-3 py-2 text-center">
                               <p className="text-lg font-black text-slate-950">
-                                {teamMemberCount}
+                                {playersCounter}
                                 <span className="text-slate-400">
                                   /{tournamentTeamSize}
                                 </span>
                               </p>
                               <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                                Accepted
+                                Players
                               </p>
                             </div>
                           </div>
 
-                          {pendingInviteCount > 0 && (
-                            <div className="mt-4 space-y-2">
-                              {pendingInvites.map((invite) => (
-                                <div
-                                  key={invite.id}
-                                  className="flex flex-col gap-3 rounded-xl border border-yellow-200 bg-yellow-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-                                >
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <Clock3
-                                      size={16}
-                                      className="shrink-0 text-yellow-700"
-                                    />
+                          {teamMemberCount >= tournamentTeamSize && (
+                            <div className="mt-4 flex items-center gap-2 rounded-xl bg-green-50 px-3 py-3 text-sm font-black text-green-700">
+                              <CheckCircle2 size={17} />
+                              Team complete — ready to register
+                            </div>
+                          )}
 
-                                    <div className="min-w-0">
-                                      <p className="text-[10px] font-black uppercase tracking-wide text-yellow-700">
-                                        Invitation pending
-                                      </p>
+                          {tournamentMode === "squad" && (
+                            <div className="mt-5">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-black text-slate-950">
+                                  Add Teammates (
+                                  {Math.min(Math.max(teamMemberCount - 1, 0) + filledSquadSlots, tournamentTeamSize - 1)}/
+                                  {tournamentTeamSize - 1})
+                                </p>
+                                <p className="text-xs font-semibold text-slate-500">
+                                  {tournamentTeamSize - 1} teammates required
+                                </p>
+                              </div>
 
-                                      <p className="mt-0.5 truncate text-sm font-black text-slate-950">
-                                        @{invite.username.replace(/^@/, "")}
-                                      </p>
+                              {addedTeammates.length > 0 && (
+                                <div className="mt-3 space-y-2">
+                                  {addedTeammates.map((mate, index) => (
+                                    <div
+                                      key={mate.id}
+                                      className="flex items-center justify-between gap-3 rounded-xl border border-green-200 bg-green-50 px-3 py-3"
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-black uppercase tracking-wide text-green-700">
+                                          Teammate {index + 1} added
+                                        </p>
+                                        <p className="mt-0.5 truncate text-sm font-black text-slate-950">
+                                          @{mate.username.replace(/^@/, "")}
+                                        </p>
+                                      </div>
+                                      <CheckCircle2
+                                        size={18}
+                                        className="shrink-0 text-green-600"
+                                      />
                                     </div>
-                                  </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {teamSlotsRemaining > 0 && (
+                                <div className="mt-3 space-y-3">
+                                  {Array.from(
+                                    { length: teamSlotsRemaining },
+                                    (_, i) => {
+                                      const row = squadRows[i] ?? {
+                                        username: "",
+                                        gamingId: "",
+                                        inGameName: "",
+                                      };
+                                      const slotNumber =
+                                        Math.max(teamMemberCount - 1, 0) +
+                                        i +
+                                        1;
+
+                                      return (
+                                        <div
+                                          key={i}
+                                          className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                                        >
+                                          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                                            Teammate {slotNumber}
+                                          </p>
+
+                                          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                                            <input
+                                              type="text"
+                                              value={row.username}
+                                              onChange={(e) =>
+                                                updateSquadRow(
+                                                  i,
+                                                  "username",
+                                                  e.target.value
+                                                )
+                                              }
+                                              disabled={
+                                                sendingInvite || registering
+                                              }
+                                              placeholder="Play & Win username"
+                                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                                            />
+
+                                            <input
+                                              type="text"
+                                              value={row.gamingId}
+                                              onChange={(e) =>
+                                                updateSquadRow(
+                                                  i,
+                                                  "gamingId",
+                                                  e.target.value
+                                                )
+                                              }
+                                              disabled={
+                                                sendingInvite || registering
+                                              }
+                                              placeholder="Gaming ID"
+                                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                                            />
+
+                                            <input
+                                              type="text"
+                                              value={row.inGameName}
+                                              onChange={(e) =>
+                                                updateSquadRow(
+                                                  i,
+                                                  "inGameName",
+                                                  e.target.value
+                                                )
+                                              }
+                                              disabled={
+                                                sendingInvite || registering
+                                              }
+                                              placeholder="In-game name"
+                                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                                            />
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                  )}
 
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      changeTournamentInvite(invite.id)
-                                    }
+                                    onClick={addSquadTeammates}
                                     disabled={
-                                      changingInviteId !== null ||
                                       sendingInvite ||
-                                      registering
+                                      registering ||
+                                      !squadRowsFilled
                                     }
-                                    className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-red-300 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
-                                    {changingInviteId === invite.id ? (
+                                    {sendingInvite ? (
                                       <>
-                                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-500 border-t-transparent" />
-                                        Changing...
+                                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                        Adding Teammates...
                                       </>
                                     ) : (
                                       <>
-                                        <X size={14} />
-                                        Change Player
+                                        <UserPlus size={17} />
+                                        {teamSlotsRemaining === 1
+                                          ? "Add Teammate"
+                                          : `Add ${teamSlotsRemaining} Teammates`}
                                       </>
                                     )}
                                   </button>
+
+                                  <div className="rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-900">
+                                    <p className="font-black">Important</p>
+                                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                                      <li>
+                                        Make sure your teammates have Play &
+                                        Win accounts.
+                                      </li>
+                                      <li>
+                                        Enter correct gaming IDs and in-game
+                                        names.
+                                      </li>
+                                      <li>
+                                        You need {tournamentTeamSize - 1}{" "}
+                                        teammates for Squad mode. The captain
+                                        pays the team entry fee.
+                                      </li>
+                                    </ul>
+                                  </div>
                                 </div>
-                              ))}
-
-                              <p className="text-xs leading-5 text-slate-400">
-                                You can change any player while their invitation is still pending. Once they accept, the player cannot be changed.
-                              </p>
+                              )}
                             </div>
                           )}
 
-                          {teamMemberCount + pendingInviteCount >= tournamentTeamSize && (
-                            <div className="mt-4 flex items-center gap-2 rounded-xl bg-green-50 px-3 py-2.5 text-sm font-black text-green-700">
-                              <CheckCircle2 size={17} />
-                              Team slot secured — ready to register
-                            </div>
-                          )}
-
-                          {teamSlotsRemaining > 0 && (
-                            <>
-                              <label className="mt-5 block text-xs font-black uppercase tracking-wide text-slate-400">
+                          {teamSlotsRemaining > 0 && tournamentMode === "duo" && (
+                            <div className="mt-5 space-y-3">
+                              <p className="text-xs font-black uppercase tracking-wide text-slate-500">
                                 Add Teammate
-                              </label>
-
-                              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                                <div className="relative flex-1">
-                                  <UserPlus
-                                    size={17}
-                                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                                  />
-
-                                  <input
-                                    type="text"
-                                    value={inviteUsername}
-                                    onChange={(e) =>
-                                      setInviteUsername(e.target.value)
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        sendTournamentInvite();
-                                      }
-                                    }}
-                                    disabled={sendingInvite || registering}
-                                    placeholder="@username"
-                                    className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
-                                  />
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={sendTournamentInvite}
-                                  disabled={
-                                    sendingInvite ||
-                                    registering ||
-                                    !inviteUsername.trim()
-                                  }
-                                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  {sendingInvite ? (
-                                    <>
-                                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                      Sending...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <UserPlus size={17} />
-                                      Send Invitation
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-
-                              <p className="mt-2 text-xs leading-5 text-slate-400">
-                                The player will receive a tournament invitation and can accept or decline it. You can change a pending invitation before acceptance, and you can confirm registration without waiting for their response.
                               </p>
-                            </>
-                          )}
 
-                          {teamId && teamMemberCount === 1 && pendingInviteCount === 0 && (
-                            <div className="mt-4 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                              <AlertCircle
-                                size={16}
-                                className="mt-0.5 shrink-0 text-slate-400"
+                              <input
+                                type="text"
+                                value={inviteUsername}
+                                onChange={(e) =>
+                                  setInviteUsername(e.target.value)
+                                }
+                                disabled={sendingInvite || registering}
+                                placeholder="Play & Win username (e.g. @player3)"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
                               />
+
+                              <input
+                                type="text"
+                                value={teammateGamingId}
+                                onChange={(e) =>
+                                  setTeammateGamingId(e.target.value)
+                                }
+                                disabled={sendingInvite || registering}
+                                placeholder="Teammate's gaming ID"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                              />
+
+                              <input
+                                type="text"
+                                value={teammateInGameName}
+                                onChange={(e) =>
+                                  setTeammateInGameName(e.target.value)
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    sendTournamentInvite();
+                                  }
+                                }}
+                                disabled={sendingInvite || registering}
+                                placeholder="Teammate's in-game name"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-yellow-500 disabled:bg-slate-100"
+                              />
+
+                              <button
+                                type="button"
+                                onClick={sendTournamentInvite}
+                                disabled={
+                                  sendingInvite ||
+                                  registering ||
+                                  !inviteUsername.trim() ||
+                                  !teammateGamingId.trim() ||
+                                  !teammateInGameName.trim()
+                                }
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-yellow-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {sendingInvite ? (
+                                  <>
+                                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    Adding Teammate...
+                                  </>
+                                ) : (
+                                  <>
+                                    <UserPlus size={17} />
+                                    Add Teammate
+                                  </>
+                                )}
+                              </button>
+
                               <p className="text-xs leading-5 text-slate-500">
-                                Add your teammate to continue. Only the captain can send invitations.
+                                Add teammates directly. The captain pays the
+                                team entry fee during registration. Game
+                                Access appears when the admin releases it.
                               </p>
                             </div>
                           )}
@@ -1381,10 +1931,7 @@ export default function TournamentRegisterPage() {
                 {!isPaid && (
                   <div className="mt-5 rounded-2xl border border-green-200 bg-green-50 p-5">
                     <div className="flex items-center gap-3">
-                      <CheckCircle2
-                        size={22}
-                        className="text-green-600"
-                      />
+                      <CheckCircle2 size={22} className="text-green-600" />
 
                       <div>
                         <p className="font-black text-green-700">
@@ -1413,16 +1960,16 @@ export default function TournamentRegisterPage() {
                           {isFull
                             ? "Tournament Full"
                             : tournament.status === "live"
-                            ? "Registration Closed"
-                            : "Registration Unavailable"}
+                              ? "Registration Closed"
+                              : "Registration Unavailable"}
                         </p>
 
                         <p className="mt-1 text-sm leading-5 text-red-600">
                           {isFull
                             ? "All available player slots have already been filled."
                             : tournament.status === "live"
-                            ? "This tournament has already started."
-                            : "Registration is currently unavailable."}
+                              ? "This tournament has already started."
+                              : "Registration is currently unavailable."}
                         </p>
                       </div>
                     </div>
@@ -1460,8 +2007,8 @@ export default function TournamentRegisterPage() {
                     ) : isPaid ? (
                       <>
                         <CreditCard size={18} />
-                        Pay {formatMoney(Number(tournament.entry_fee))}{" "}
-                        & Confirm Registration
+                        Pay {formatMoney(Number(tournament.entry_fee))} &
+                        Confirm Registration
                       </>
                     ) : (
                       <>
@@ -1488,10 +2035,7 @@ export default function TournamentRegisterPage() {
           {/* Right summary */}
           <aside className="h-fit rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-3">
-              <ShieldCheck
-                size={21}
-                className="text-green-600"
-              />
+              <ShieldCheck size={21} className="text-green-600" />
 
               <h2 className="text-lg font-black text-slate-950">
                 Registration Summary
@@ -1510,9 +2054,7 @@ export default function TournamentRegisterPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4 py-4">
-                <span className="text-sm text-slate-500">
-                  Game
-                </span>
+                <span className="text-sm text-slate-500">Game</span>
 
                 <span className="font-bold text-slate-950">
                   {tournament.game}
@@ -1520,9 +2062,7 @@ export default function TournamentRegisterPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4 py-4">
-                <span className="text-sm text-slate-500">
-                  Format
-                </span>
+                <span className="text-sm text-slate-500">Format</span>
 
                 <span className="text-right font-bold text-slate-950">
                   {tournamentMode === "solo"
@@ -1535,9 +2075,7 @@ export default function TournamentRegisterPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4 py-4">
-                <span className="text-sm text-slate-500">
-                  Entry Fee
-                </span>
+                <span className="text-sm text-slate-500">Entry Fee</span>
 
                 <span className="font-black text-slate-950">
                   {isPaid
@@ -1547,9 +2085,7 @@ export default function TournamentRegisterPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4 py-4">
-                <span className="text-sm text-slate-500">
-                  Prize Pool
-                </span>
+                <span className="text-sm text-slate-500">Prize Pool</span>
 
                 <span className="font-black text-slate-950">
                   {formatMoney(Number(tournament.prize_pool))}
@@ -1557,9 +2093,7 @@ export default function TournamentRegisterPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4 py-4">
-                <span className="text-sm text-slate-500">
-                  Players
-                </span>
+                <span className="text-sm text-slate-500">Players</span>
 
                 <span className="font-bold text-slate-950">
                   {tournament.registered_players} /{" "}
@@ -1568,9 +2102,7 @@ export default function TournamentRegisterPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4 py-4">
-                <span className="text-sm text-slate-500">
-                  Start Date
-                </span>
+                <span className="text-sm text-slate-500">Start Date</span>
 
                 <span className="text-right font-bold text-slate-950">
                   {formatDate(tournament.start_date)}
@@ -1622,8 +2154,8 @@ export default function TournamentRegisterPage() {
                   </div>
 
                   <p className="text-sm leading-5 text-slate-600">
-                    Your wallet transaction is recorded if the
-                    tournament is paid.
+                    Your wallet transaction is recorded if the tournament is
+                    paid.
                   </p>
                 </div>
 
@@ -1633,8 +2165,8 @@ export default function TournamentRegisterPage() {
                   </div>
 
                   <p className="text-sm leading-5 text-slate-600">
-                    Eligible game access becomes available through
-                    your dashboard.
+                    Eligible game access becomes available through your
+                    dashboard.
                   </p>
                 </div>
               </div>

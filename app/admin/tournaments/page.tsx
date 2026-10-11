@@ -93,6 +93,7 @@ export default function AdminTournamentsPage() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -205,6 +206,70 @@ export default function AdminTournamentsPage() {
     setEditingId(null);
     setForm(emptyForm);
   }
+
+async function handleTournamentImageUpload(
+  e: React.ChangeEvent<HTMLInputElement>
+) {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    setError("Please select a valid image file.");
+    return;
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    setError("Image size must be 5 MB or less.");
+    return;
+  }
+
+  setUploadingImage(true);
+  setError("");
+  setMessage("");
+
+  try {
+    const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    const filePath = `tournament-images/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("promotion-images")
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type,
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data } = supabase.storage
+      .from("promotion-images")
+      .getPublicUrl(filePath);
+
+    if (!data.publicUrl) {
+      throw new Error("Could not generate the image URL.");
+    }
+
+    setForm((current) => ({
+      ...current,
+      image: data.publicUrl,
+    }));
+
+    setMessage("Tournament image uploaded successfully.");
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Unable to upload tournament image."
+    );
+  } finally {
+    setUploadingImage(false);
+  }
+}
+
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1253,29 +1318,95 @@ export default function AdminTournamentsPage() {
                   </select>
                 </div>
 
-                {/* IMAGE */}
-                <div>
-                  <label className="mb-2 block text-sm font-bold text-slate-700">
-                    Tournament Image URL
-                  </label>
+                
+{/* IMAGE */}
+<div>
+  <label className="mb-2 block text-sm font-bold text-slate-700">
+    Tournament Image
+  </label>
 
-                  <input
-                    type="text"
-                    value={form.image}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        image: e.target.value,
-                      })
-                    }
-                    placeholder="https://..."
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-yellow-500"
-                  />
+  <div className="rounded-xl border border-slate-200 p-4">
+    <p className="mb-3 text-sm font-bold text-slate-700">
+      Option 1 — Use an Image URL
+    </p>
 
-                  <p className="mt-1 text-xs text-slate-400">
-                    Direct image uploading can be added later.
-                  </p>
-                </div>
+    <input
+      type="url"
+      value={form.image}
+      onChange={(e) =>
+        setForm({
+          ...form,
+          image: e.target.value,
+        })
+      }
+      placeholder="https://example.com/tournament-image.jpg"
+      disabled={uploadingImage}
+      className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-yellow-500 disabled:bg-slate-100"
+    />
+
+    <div className="my-4 flex items-center gap-3">
+      <div className="h-px flex-1 bg-slate-200" />
+      <span className="text-xs font-bold uppercase text-slate-400">
+        Or
+      </span>
+      <div className="h-px flex-1 bg-slate-200" />
+    </div>
+
+    <p className="mb-3 text-sm font-bold text-slate-700">
+      Option 2 — Upload an Image
+    </p>
+
+    <input
+      type="file"
+      accept="image/*"
+      onChange={handleTournamentImageUpload}
+      disabled={uploadingImage}
+      className="block w-full cursor-pointer text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-950 file:px-4 file:py-2.5 file:font-bold file:text-white hover:file:bg-yellow-500 hover:file:text-slate-950 disabled:opacity-50"
+    />
+
+    <p className="mt-2 text-xs text-slate-400">
+      Select JPG, PNG, WebP, or another supported image format.
+      Maximum file size: 5 MB.
+    </p>
+
+    {uploadingImage && (
+      <p className="mt-3 text-sm font-semibold text-blue-600">
+        Uploading image...
+      </p>
+    )}
+
+    {form.image.trim() && (
+      <div className="mt-4">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+          Image Preview
+        </p>
+
+        <img
+          src={form.image}
+          alt="Tournament preview"
+          className="max-h-56 w-full rounded-xl border border-slate-200 object-cover"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={() =>
+            setForm({
+              ...form,
+              image: "",
+            })
+          }
+          disabled={uploadingImage}
+          className="mt-3 text-sm font-bold text-red-600 hover:text-red-700 disabled:opacity-50"
+        >
+          Remove Image
+        </button>
+      </div>
+    )}
+  </div>
+</div>
 
                 {/* BUTTONS */}
                 <div className="flex gap-3 border-t border-slate-100 pt-5">
@@ -1289,7 +1420,7 @@ export default function AdminTournamentsPage() {
 
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || uploadingImage}
                     className="flex-1 rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:bg-yellow-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {saving

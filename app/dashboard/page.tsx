@@ -317,41 +317,7 @@ export default async function DashboardPage() {
   </p>
 </Link>
 
-          {/* Gaming IDs */}
-          <Link
-            href="/dashboard/gaming-ids"
-            className="group rounded-2xl border border-slate-200 bg-white p-6 transition hover:-translate-y-1 hover:border-yellow-300 hover:shadow-lg"
-          >
-            <h3 className="font-black text-slate-950">
-              Gaming IDs
-            </h3>
-
-            <p className="mt-2 text-sm text-slate-500">
-              Save and manage your gaming IDs and in-game names.
-            </p>
-
-            <p className="mt-4 text-sm font-bold text-yellow-600 transition group-hover:text-slate-950">
-              Manage Gaming IDs →
-            </p>
-          </Link>
-
-          {/* My Squads */}
-          <Link
-            href="/dashboard/squads"
-            className="group rounded-2xl border border-slate-200 bg-white p-6 transition hover:-translate-y-1 hover:border-yellow-300 hover:shadow-lg"
-          >
-            <h3 className="font-black text-slate-950">
-              My Squads
-            </h3>
-
-            <p className="mt-2 text-sm text-slate-500">
-              Create squads, invite players and manage your teams.
-            </p>
-
-            <p className="mt-4 text-sm font-bold text-yellow-600 transition group-hover:text-slate-950">
-              Manage Squads →
-            </p>
-          </Link>
+          
 
           {/* Profile */}
           <Link
